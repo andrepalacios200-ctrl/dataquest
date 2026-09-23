@@ -1,72 +1,20 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext,useContext,useEffect,useMemo,useState,type ReactNode } from 'react';
 import type { LevelId, RouteId } from '../types';
+import { supabase } from '../lib/supabase';
+import { useAuth } from './AuthContext';
 
-const STORAGE_KEY = 'dataquest-progress-v3';
+const STORAGE_KEY='dataquest-progress-v3';
+type State={xp:number;streak:number;lastActivityDate:string|null;completedLessons:string[];quizCorrect:number;quizAttempts:number;completedQuizzes:string[]};
+const empty:State={xp:0,streak:0,lastActivityDate:null,completedLessons:[],quizCorrect:0,quizAttempts:0,completedQuizzes:[]};
+function today(){const d=new Date();return d.toISOString().slice(0,10)}
+function localLoad():State{try{const x=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');return x?{...empty,...x}:empty}catch{return empty}}
+function days(a:string,b:string){return Math.round((new Date(b).getTime()-new Date(a).getTime())/86400000)}
 
-type ProgressState = {
-  xp: number;
-  streak: number;
-  lastActivityDate: string | null;
-  completedLessons: string[];
-  quizCorrect: number;
-  quizAttempts: number;
-  completedQuizzes: string[];
-};
-
-const initialState: ProgressState = { xp: 0, streak: 0, lastActivityDate: null, completedLessons: [], quizCorrect: 0, quizAttempts: 0, completedQuizzes: [] };
-
-type ProgressContextValue = ProgressState & {
-  isCompleted: (lessonId: string) => boolean;
-  completeLesson: (lessonId: string, xp: number) => { awarded: boolean; xp: number };
-  completeQuiz: (lessonId: string, correct: boolean) => { bonus: number };
-  getLessonProgress: (routeId: RouteId, levelId: LevelId, lessonIds: string[]) => number;
-  getRouteProgress: (lessonIds: string[]) => number;
-  resetProgress: () => void;
-};
-
-const ProgressContext = createContext<ProgressContextValue | null>(null);
-
-function todayKey() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-function dateDiffDays(a: string, b: string) { return Math.round((new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime()) / 86400000); }
-function loadState(): ProgressState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY); if (!raw) return initialState;
-    const p = JSON.parse(raw) as Partial<ProgressState>;
-    const last = typeof p.lastActivityDate==='string'?p.lastActivityDate:null;
-    const stale = last ? dateDiffDays(last, todayKey()) > 1 : false;
-    return { xp: typeof p.xp==='number'?p.xp:0, streak: stale ? 0 : (typeof p.streak==='number'?p.streak:0), lastActivityDate:last, completedLessons:Array.isArray(p.completedLessons)?p.completedLessons:[], quizCorrect:typeof p.quizCorrect==='number'?p.quizCorrect:0, quizAttempts:typeof p.quizAttempts==='number'?p.quizAttempts:0, completedQuizzes:Array.isArray(p.completedQuizzes)?p.completedQuizzes:[] };
-  } catch { return initialState; }
-}
-
-export function ProgressProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<ProgressState>(loadState);
-  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }, [state]);
-
-  const value = useMemo<ProgressContextValue>(() => ({
-    ...state,
-    isCompleted: (lessonId) => state.completedLessons.includes(lessonId),
-    completeLesson: (lessonId, xp) => {
-      if (state.completedLessons.includes(lessonId)) return { awarded: false, xp: 0 };
-      const today = todayKey();
-      setState(current => {
-        if (current.completedLessons.includes(lessonId)) return current;
-        const diff = current.lastActivityDate ? dateDiffDays(current.lastActivityDate, today) : null;
-        const nextStreak = diff === 1 ? current.streak + 1 : diff === 0 ? Math.max(current.streak, 1) : 1;
-        return { ...current, xp: current.xp + xp, streak: nextStreak, lastActivityDate: today, completedLessons: [...current.completedLessons, lessonId] };
-      });
-      return { awarded: true, xp };
-    },
-    completeQuiz: (lessonId, correct) => {
-      if (state.completedQuizzes.includes(lessonId)) return { bonus: 0 };
-      const bonus = correct ? 5 : 0;
-      setState(current => ({ ...current, xp: current.xp + bonus, quizAttempts: current.quizAttempts + 1, quizCorrect: current.quizCorrect + (correct ? 1 : 0), completedQuizzes: [...current.completedQuizzes, lessonId] }));
-      return { bonus };
-    },
-    getLessonProgress: (_routeId, _levelId, lessonIds) => lessonIds.length ? Math.round((lessonIds.filter(id => state.completedLessons.includes(id)).length / lessonIds.length) * 100) : 0,
-    getRouteProgress: (lessonIds) => lessonIds.length ? Math.round((lessonIds.filter(id => state.completedLessons.includes(id)).length / lessonIds.length) * 100) : 0,
-    resetProgress: () => setState(initialState),
-  }), [state]);
-
-  return <ProgressContext.Provider value={value}>{children}</ProgressContext.Provider>;
-}
-export function useProgress() { const context = useContext(ProgressContext); if (!context) throw new Error('useProgress debe usarse dentro de ProgressProvider'); return context; }
+type Value=State&{isCompleted:(id:string)=>boolean;completeLesson:(id:string,xp:number)=>Promise<{awarded:boolean;xp:number}>;completeQuiz:(id:string,correct:boolean)=>Promise<{bonus:number}>;getLessonProgress:(r:RouteId,l:LevelId,ids:string[])=>number;getRouteProgress:(ids:string[])=>number;resetProgress:()=>Promise<void>;loading:boolean};
+const C=createContext<Value|null>(null);
+export function ProgressProvider({children}:{children:ReactNode}){const{user,profile,configured}=useAuth();const[state,setState]=useState<State>(localLoad);const[loading,setLoading]=useState(Boolean(user&&configured));
+ useEffect(()=>{if(!user||!supabase){setLoading(false);return;}let active=true;(async()=>{const {data}=await supabase.from('lesson_progress').select('lesson_id').eq('user_id',user.id);const ids=(data??[]).map(x=>x.lesson_id);const {data:q}=await supabase.from('quiz_attempts').select('lesson_id,correct').eq('user_id',user.id);const {data:p}=await supabase.from('profiles').select('xp,streak,last_activity_date').eq('id',user.id).single();if(active)setState({xp:p?.xp??profile?.xp??0,streak:p?.streak??0,lastActivityDate:p?.last_activity_date??null,completedLessons:ids,quizCorrect:(q??[]).filter(x=>x.correct).length,quizAttempts:(q??[]).length,completedQuizzes:(q??[]).map(x=>x.lesson_id)});setLoading(false)})();return()=>{active=false}},[user?.id]);
+ useEffect(()=>{if(!configured)localStorage.setItem(STORAGE_KEY,JSON.stringify(state))},[state,configured]);
+ const value=useMemo<Value>(()=>({ ...state,loading,isCompleted:id=>state.completedLessons.includes(id),completeLesson:async(id,xp)=>{if(state.completedLessons.includes(id))return{awarded:false,xp:0};if(supabase&&user){const {data,error}=await supabase.rpc('complete_lesson',{p_lesson_id:id,p_xp:xp});if(error)throw error;const row=data?.[0]??data;setState(s=>({...s,xp:row?.xp??s.xp+xp,streak:row?.streak??s.streak,lastActivityDate:row?.last_activity_date??today(),completedLessons:s.completedLessons.includes(id)?s.completedLessons:[...s.completedLessons,id]}));return{awarded:true,xp};}const t=today();const diff=state.lastActivityDate?days(state.lastActivityDate,t):null;const streak=diff===1?state.streak+1:diff===0?Math.max(1,state.streak):1;setState(s=>({...s,xp:s.xp+xp,streak,lastActivityDate:t,completedLessons:[...s.completedLessons,id]}));return{awarded:true,xp}},completeQuiz:async(id,correct)=>{if(state.completedQuizzes.includes(id))return{bonus:0};if(supabase&&user){const {data,error}=await supabase.rpc('record_quiz_attempt',{p_lesson_id:id,p_correct:correct});if(error)throw error;const bonus=correct?5:0;setState(s=>({...s,xp:data?.xp??s.xp+bonus,quizCorrect:s.quizCorrect+(correct?1:0),quizAttempts:s.quizAttempts+1,completedQuizzes:[...s.completedQuizzes,id]}));return{bonus};}const bonus=correct?5:0;setState(s=>({...s,xp:s.xp+bonus,quizCorrect:s.quizCorrect+(correct?1:0),quizAttempts:s.quizAttempts+1,completedQuizzes:[...s.completedQuizzes,id]}));return{bonus}},getLessonProgress:(_r,_l,ids)=>ids.length?Math.round(ids.filter(id=>state.completedLessons.includes(id)).length/ids.length*100):0,getRouteProgress:ids=>ids.length?Math.round(ids.filter(id=>state.completedLessons.includes(id)).length/ids.length*100):0,resetProgress:async()=>{if(supabase&&user){await supabase.rpc('reset_my_progress');}setState(empty)} }),[state,user?.id,configured,loading]);
+ return <C.Provider value={value}>{children}</C.Provider>}
+export function useProgress(){const c=useContext(C);if(!c)throw new Error('useProgress debe usarse dentro de ProgressProvider');return c;}
