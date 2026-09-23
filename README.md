@@ -1,28 +1,39 @@
-# DataQuest — Data Learning Platform
+# DataQuest
 
-Primera versión frontend de una plataforma gamificada estilo Duolingo para aprender Ciencia de Datos, Ingeniería de Datos y Análisis de Datos.
+Plataforma educativa gamificada para aprender Ciencia de Datos, Ingeniería de Datos y Análisis de Datos.
 
-## Stack
-- React + TypeScript
-- Vite
-- Tailwind CSS
-- React Router
-- Lucide React
-- Datos mock en `src/data/content.ts`
+## Ejecutar localmente
 
-## Ejecutar
 ```bash
 npm install
 npm run dev
 ```
 
-## Build
+## Build de producción
+
 ```bash
 npm run build
+npm run preview
 ```
 
-## Decisiones clave
-- Los 3 niveles (Junior, Mid-Senior y Senior) están disponibles desde el inicio.
-- No existen candados ni prerequisitos de progreso.
-- El progreso, XP, racha, medallas y ranking son mock y están preparados para sustituirse por API/estado persistente.
-- La estructura separa datos, componentes y páginas para facilitar una futura conexión con backend.
+## Progreso local
+
+La versión actual guarda en `localStorage` del navegador:
+
+- XP acumulado
+- Lecciones completadas
+- Racha diaria
+- Intentos y aciertos de quizzes
+- Quizzes ya reclamados
+
+El progreso es por navegador/dispositivo. Todavía no existe backend ni sincronización entre dispositivos.
+
+## Despliegue en Vercel
+
+Conecta el repositorio de GitHub a Vercel y usa:
+
+- Framework: Vite
+- Build Command: `npm run build`
+- Output Directory: `dist`
+
+No hacen falta variables de entorno para esta versión.
